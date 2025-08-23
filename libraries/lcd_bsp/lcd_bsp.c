@@ -62,7 +62,8 @@ void lcd_lvgl_Init(void)
   const esp_lcd_panel_dev_config_t panel_config = 
   {
     .reset_gpio_num = EXAMPLE_PIN_NUM_LCD_RST,
-    .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+    // Commented out for ESP-IDF compatibility - rgb_ele_order not available in this version
+    // .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
     .bits_per_pixel = LCD_BIT_PER_PIXEL,
     .vendor_config = &vendor_config,
   };
