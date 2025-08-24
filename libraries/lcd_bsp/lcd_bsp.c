@@ -1,5 +1,5 @@
 #include "lcd_bsp.h"
-#include "esp_lcd_co5300.h"
+#include "esp_lcd_co5300_my.h"
 #include "lcd_config.h"
 #include "FT3168.h"
 #include "esp_log.h"
@@ -20,7 +20,7 @@ static esp_lcd_panel_io_handle_t amoled_panel_io_handle = NULL;
 static const co5300_lcd_init_cmd_t lcd_init_cmds[] = 
 {
   {0x11, NULL, 0, 120},               // SLPOUT - Exit sleep mode, wait 120ms
-  {0x3A, (uint8_t []){0x66}, 1, 0},   // COLMOD - Set pixel format to 18-bit (RGB666)
+  {0x3A, (uint8_t []){0x55}, 1, 0},   // COLMOD - Set pixel format to 16-bit (RGB565)
   {0x36, (uint8_t []){0x00}, 1, 0},   // MADCTL - Memory access control (normal)
   {0x29, NULL, 0, 10},                // DISPON - Display on, wait 10ms
   {0x51, (uint8_t []){0xFF}, 1, 0},   // WRDISBV - Set brightness to maximum
@@ -199,6 +199,34 @@ void lcd_lvgl_Init(void)
     return;
   }
   ESP_LOGI(TAG_LCD, "LVGL task created successfully");
+
+  // Test basic display functionality before starting LVGL demo
+  ESP_LOGI(TAG_LCD, "Testing basic display functionality...");
+  
+  // Try to fill display with a simple color pattern
+  uint16_t test_color = 0xF800; // Red color in RGB565
+  size_t total_pixels = EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES;
+  uint16_t* test_buffer = malloc(total_pixels * sizeof(uint16_t));
+  if (test_buffer) {
+    // Fill buffer with red color
+    for (size_t i = 0; i < total_pixels; i++) {
+      test_buffer[i] = test_color;
+    }
+    
+    ESP_LOGI(TAG_LCD, "Sending red test pattern to display...");
+    esp_err_t test_result = esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES, test_buffer);
+    if (test_result != ESP_OK) {
+      ESP_LOGE(TAG_LCD, "Test pattern draw failed: %s", esp_err_to_name(test_result));
+    } else {
+      ESP_LOGI(TAG_LCD, "Test pattern sent successfully");
+    }
+    free(test_buffer);
+    
+    // Wait 2 seconds to see the test pattern
+    vTaskDelay(pdMS_TO_TICKS(2000));
+  } else {
+    ESP_LOGE(TAG_LCD, "Failed to allocate test buffer");
+  }
 
   ESP_LOGI(TAG_LCD, "Starting LVGL demo...");
   if (example_lvgl_lock(-1)) 

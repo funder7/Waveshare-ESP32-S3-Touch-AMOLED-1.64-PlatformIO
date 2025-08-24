@@ -17,13 +17,13 @@
 #include "esp_lcd_panel_commands.h"
 #include "esp_log.h"
 
-#include "esp_lcd_co5300.h"
+#include "esp_lcd_co5300_my.h"
 
 #define LCD_OPCODE_WRITE_CMD        (0x02ULL)
 #define LCD_OPCODE_READ_CMD         (0x03ULL)
 #define LCD_OPCODE_WRITE_COLOR      (0x32ULL)
 
-static const char *TAG = "co5300";
+static const char *TAG = "CO5300";
 
 static esp_err_t panel_co5300_del(esp_lcd_panel_t *panel);
 static esp_err_t panel_co5300_reset(esp_lcd_panel_t *panel);
