@@ -20,7 +20,7 @@
 #include "esp_lcd_co5300_my.h"
 
 #define LCD_OPCODE_WRITE_CMD        (0x02ULL)
-#define LCD_OPCODE_READ_CMD         (0x03ULL)
+#define LCD_OPCODE_READ_CMD         (0x0BULL)
 #define LCD_OPCODE_WRITE_COLOR      (0x32ULL)
 
 static const char *TAG = "CO5300";

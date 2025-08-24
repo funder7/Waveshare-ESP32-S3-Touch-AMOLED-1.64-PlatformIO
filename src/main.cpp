@@ -13,7 +13,7 @@ static void dcs_read_and_log(esp_lcd_panel_io_handle_t io, uint8_t cmd, size_t l
 {
   uint8_t buf[8] = {0};
   if (len > sizeof(buf)) len = sizeof(buf);
-  uint32_t field = (0x03U << 24) | cmd; // QSPI read opcode + cmd
+  uint32_t field = (0x0B << 24) | cmd; // CO5300 Fast Read opcode + cmd
   esp_err_t r = esp_lcd_panel_io_rx_param(io, field, buf, len);
   if (r == ESP_OK) {
     if (len == 1) {
@@ -30,12 +30,12 @@ static void dcs_read_and_log(esp_lcd_panel_io_handle_t io, uint8_t cmd, size_t l
 
 #define LCD_HOST    SPI2_HOST
 
-// AMOLED initialization sequence based on SH8601 reference
+// CO5300 AMOLED initialization sequence - corrected per datasheet
 static const co5300_lcd_init_cmd_t amoled_init_cmds[] = 
 {
-  {0x11, NULL, 0, 500},               // SLPOUT - Exit sleep mode, wait 500ms
+  {0x11, NULL, 0, 120},               // SLPOUT - Exit sleep mode, wait 120ms (per datasheet)
   {0x3A, (uint8_t []){0x55}, 1, 0},   // COLMOD - Set pixel format to 16-bit (RGB565)
-  {0x36, (uint8_t []){0x08}, 1, 0},   // MADCTL - BGR
+  {0x36, (uint8_t []){0x00}, 1, 0},   // MADCTL - Normal RGB order (not BGR)
   {0x53, (uint8_t []){0x20}, 1, 10},  // WRCTRLD - enable brightness control
   {0x51, (uint8_t []){0x80}, 1, 10},  // WRDISBV - medium brightness pre-DISPON
   {0x29, NULL, 0, 50},                // DISPON - Display on, wait 50ms
@@ -244,8 +244,8 @@ void setup()
   test_display_basic();
   
   // Wait a moment, then test color patterns
-  //delay(1000);
-  //test_color_patterns();
+  delay(1000);
+  test_color_patterns();
   
   Serial.println("=== Setup Complete ===");
 }
