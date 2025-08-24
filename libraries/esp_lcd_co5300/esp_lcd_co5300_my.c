@@ -52,6 +52,11 @@ typedef struct {
     } flags;
 } co5300_panel_t;
 
+static inline uint32_t co5300_encode_cmd(const co5300_panel_t *p, uint8_t cmd)
+{
+    return p->flags.use_qspi_interface ? ((LCD_OPCODE_WRITE_CMD << 24) | cmd) : cmd;
+}
+
 esp_err_t esp_lcd_new_panel_co5300(const esp_lcd_panel_io_handle_t io, const esp_lcd_panel_dev_config_t *panel_dev_config, esp_lcd_panel_handle_t *ret_panel)
 {
     ESP_RETURN_ON_FALSE(io && panel_dev_config && ret_panel, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
@@ -162,12 +167,46 @@ static esp_err_t panel_co5300_reset(esp_lcd_panel_t *panel)
     } else {
         ESP_LOGI(TAG, "Performing software reset");
         // Perform software reset
-        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, LCD_CMD_SWRESET, NULL, 0), TAG, "send command failed");
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, co5300_encode_cmd(co5300, LCD_CMD_SWRESET), NULL, 0), TAG, "send command failed");
         vTaskDelay(pdMS_TO_TICKS(120));
         ESP_LOGI(TAG, "Software reset completed");
     }
 
     return ESP_OK;
+}
+
+static inline esp_err_t co5300_read_reg(co5300_panel_t *co5300, uint8_t cmd, uint8_t *buf, size_t len)
+{
+    uint32_t cmd_field = co5300_encode_cmd(co5300, cmd); // encode per interface; for RX we need READ opcode
+    if (co5300->flags.use_qspi_interface) {
+        cmd_field = (LCD_OPCODE_READ_CMD << 24) | cmd;
+    }
+    return esp_lcd_panel_io_rx_param(co5300->io, cmd_field, buf, len);
+}
+
+static void co5300_dump_basic(co5300_panel_t *co5300)
+{
+    uint8_t id[3] = {0}, stat = 0, mad = 0, col = 0;
+    if (co5300_read_reg(co5300, 0x04, id, 3) == ESP_OK) {
+        ESP_LOGI(TAG, "DCS ID: %02X %02X %02X", id[0], id[1], id[2]);
+    } else {
+        ESP_LOGW(TAG, "DCS ID read failed");
+    }
+    if (co5300_read_reg(co5300, 0x0A, &stat, 1) == ESP_OK) {
+        ESP_LOGI(TAG, "DCS STATUS: %02X", stat);
+    } else {
+        ESP_LOGW(TAG, "DCS STATUS read failed");
+    }
+    if (co5300_read_reg(co5300, 0x0B, &mad, 1) == ESP_OK) {
+        ESP_LOGI(TAG, "RDMADCTL: %02X", mad);
+    } else {
+        ESP_LOGW(TAG, "RDMADCTL read failed");
+    }
+    if (co5300_read_reg(co5300, 0x0C, &col, 1) == ESP_OK) {
+        ESP_LOGI(TAG, "RDDCOLMOD: %02X", col);
+    } else {
+        ESP_LOGW(TAG, "RDDCOLMOD read failed");
+    }
 }
 
 static esp_err_t panel_co5300_init(esp_lcd_panel_t *panel)
@@ -184,12 +223,17 @@ static esp_err_t panel_co5300_init(esp_lcd_panel_t *panel)
             const co5300_lcd_init_cmd_t *cmd = &co5300->init_cmds[i];
             ESP_LOGI(TAG, "Sending command[%d]: 0x%02X, data_bytes: %d", i, cmd->cmd, cmd->data_bytes);
             
-            esp_err_t ret = esp_lcd_panel_io_tx_param(io, cmd->cmd, cmd->data, cmd->data_bytes);
+            esp_err_t ret = esp_lcd_panel_io_tx_param(io, co5300_encode_cmd(co5300, cmd->cmd), cmd->data, cmd->data_bytes);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "Command[%d] 0x%02X failed: %s", i, cmd->cmd, esp_err_to_name(ret));
                 return ret;
             }
             ESP_LOGI(TAG, "Command[%d] 0x%02X sent successfully", i, cmd->cmd);
+
+            // After key commands, try to read back
+            if (cmd->cmd == LCD_CMD_MADCTL || cmd->cmd == LCD_CMD_COLMOD || cmd->cmd == LCD_CMD_DISPON) {
+                co5300_dump_basic(co5300);
+            }
             
             if (cmd->delay_ms > 0) {
                 ESP_LOGI(TAG, "Waiting %d ms after command[%d]", cmd->delay_ms, i);
@@ -200,21 +244,31 @@ static esp_err_t panel_co5300_init(esp_lcd_panel_t *panel)
         ESP_LOGI(TAG, "Using default CO5300 initialization sequence");
         // Default CO5300 initialization sequence
         ESP_LOGI(TAG, "Sending SLPOUT command");
-        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, LCD_CMD_SLPOUT, NULL, 0), TAG, "send command failed");
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, co5300_encode_cmd(co5300, LCD_CMD_SLPOUT), NULL, 0), TAG, "send command failed");
         vTaskDelay(pdMS_TO_TICKS(120));
         
         ESP_LOGI(TAG, "Sending MADCTL command (value: 0x%02X)", co5300->madctl_val);
-        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, LCD_CMD_MADCTL, (uint8_t[]) {co5300->madctl_val}, 1), TAG, "send command failed");
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, co5300_encode_cmd(co5300, LCD_CMD_MADCTL), (uint8_t[]) {co5300->madctl_val}, 1), TAG, "send command failed");
         
         ESP_LOGI(TAG, "Sending COLMOD command (value: 0x%02X)", co5300->colmod_val);
-        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, LCD_CMD_COLMOD, (uint8_t[]) {co5300->colmod_val}, 1), TAG, "send command failed");
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, co5300_encode_cmd(co5300, LCD_CMD_COLMOD), (uint8_t[]) {co5300->colmod_val}, 1), TAG, "send command failed");
         
         ESP_LOGI(TAG, "Sending DISPON command");
-        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, LCD_CMD_DISPON, NULL, 0), TAG, "send command failed");
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, co5300_encode_cmd(co5300, LCD_CMD_DISPON), NULL, 0), TAG, "send command failed");
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
     ESP_LOGI(TAG, "CO5300 initialization completed successfully");
+    // Final dump
+    co5300_dump_basic(co5300);
+    return ESP_OK;
+}
+
+esp_err_t esp_lcd_panel_co5300_debug_dump(esp_lcd_panel_handle_t panel)
+{
+    if (!panel) return ESP_ERR_INVALID_ARG;
+    co5300_panel_t *co5300 = __containerof(panel, co5300_panel_t, base);
+    co5300_dump_basic(co5300);
     return ESP_OK;
 }
 
@@ -239,18 +293,18 @@ static esp_err_t panel_co5300_draw_bitmap(esp_lcd_panel_t *panel, int x_start, i
                  co5300->x_gap, co5300->y_gap, co5300->flags.use_qspi_interface);
     }
 
-    // Set column address
-    esp_err_t ret = esp_lcd_panel_io_tx_param(io, LCD_CMD_CASET, (uint8_t[]) {
-        (x_start >> 8) & 0xFF, x_start & 0xFF, (x_end >> 8) & 0xFF, x_end & 0xFF,
+    // Set column address (end is inclusive -> use x_end - 1)
+    esp_err_t ret = esp_lcd_panel_io_tx_param(io, co5300_encode_cmd(co5300, LCD_CMD_CASET), (uint8_t[]) {
+        (x_start >> 8) & 0xFF, x_start & 0xFF, ((x_end - 1) >> 8) & 0xFF, (x_end - 1) & 0xFF,
     }, 4);
     if (ret != ESP_OK && draw_count <= 3) {
         ESP_LOGE(TAG, "DRAW[%d] CASET failed: %s", draw_count, esp_err_to_name(ret));
         return ret;
     }
 
-    // Set row address
-    ret = esp_lcd_panel_io_tx_param(io, LCD_CMD_RASET, (uint8_t[]) {
-        (y_start >> 8) & 0xFF, y_start & 0xFF, (y_end >> 8) & 0xFF, y_end & 0xFF,
+    // Set row address (end is inclusive -> use y_end - 1)
+    ret = esp_lcd_panel_io_tx_param(io, co5300_encode_cmd(co5300, LCD_CMD_RASET), (uint8_t[]) {
+        (y_start >> 8) & 0xFF, y_start & 0xFF, ((y_end - 1) >> 8) & 0xFF, (y_end - 1) & 0xFF,
     }, 4);
     if (ret != ESP_OK && draw_count <= 3) {
         ESP_LOGE(TAG, "DRAW[%d] RASET failed: %s", draw_count, esp_err_to_name(ret));
@@ -289,7 +343,7 @@ static esp_err_t panel_co5300_invert_color(esp_lcd_panel_t *panel, bool invert_c
     } else {
         command = LCD_CMD_INVOFF;
     }
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, command, NULL, 0), TAG, "send command failed");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, co5300_encode_cmd(co5300, command), NULL, 0), TAG, "send command failed");
     return ESP_OK;
 }
 
@@ -307,7 +361,7 @@ static esp_err_t panel_co5300_mirror(esp_lcd_panel_t *panel, bool mirror_x, bool
     } else {
         co5300->madctl_val &= ~LCD_CMD_MY_BIT;
     }
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, LCD_CMD_MADCTL, (uint8_t[]) {co5300->madctl_val}, 1), TAG, "send command failed");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, co5300_encode_cmd(co5300, LCD_CMD_MADCTL), (uint8_t[]) {co5300->madctl_val}, 1), TAG, "send command failed");
     return ESP_OK;
 }
 
@@ -320,7 +374,7 @@ static esp_err_t panel_co5300_swap_xy(esp_lcd_panel_t *panel, bool swap_axes)
     } else {
         co5300->madctl_val &= ~LCD_CMD_MV_BIT;
     }
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, LCD_CMD_MADCTL, (uint8_t[]) {co5300->madctl_val}, 1), TAG, "send command failed");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, co5300_encode_cmd(co5300, LCD_CMD_MADCTL), (uint8_t[]) {co5300->madctl_val}, 1), TAG, "send command failed");
     return ESP_OK;
 }
 
@@ -332,17 +386,17 @@ static esp_err_t panel_co5300_set_gap(esp_lcd_panel_t *panel, int x_gap, int y_g
     return ESP_OK;
 }
 
-static esp_err_t panel_co5300_disp_on_off(esp_lcd_panel_t *panel, bool on_off)
+static esp_err_t panel_co5300_disp_on_off(esp_lcd_panel_t *panel, bool off)
 {
     co5300_panel_t *co5300 = __containerof(panel, co5300_panel_t, base);
     esp_lcd_panel_io_handle_t io = co5300->io;
     int command = 0;
 
-    if (on_off) {
-        command = LCD_CMD_DISPON;
-    } else {
+    if (off) {
         command = LCD_CMD_DISPOFF;
+    } else {
+        command = LCD_CMD_DISPON;
     }
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, command, NULL, 0), TAG, "send command failed");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, co5300_encode_cmd(co5300, command), NULL, 0), TAG, "send command failed");
     return ESP_OK;
 }

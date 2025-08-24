@@ -9,20 +9,37 @@
 
 static const char* TAG = "display_test";
 
+static void dcs_read_and_log(esp_lcd_panel_io_handle_t io, uint8_t cmd, size_t len, const char* name)
+{
+  uint8_t buf[8] = {0};
+  if (len > sizeof(buf)) len = sizeof(buf);
+  uint32_t field = (0x03U << 24) | cmd; // QSPI read opcode + cmd
+  esp_err_t r = esp_lcd_panel_io_rx_param(io, field, buf, len);
+  if (r == ESP_OK) {
+    if (len == 1) {
+      ESP_LOGI(TAG, "DCS %s (0x%02X): %02X", name, cmd, buf[0]);
+    } else if (len == 3) {
+      ESP_LOGI(TAG, "DCS %s (0x%02X): %02X %02X %02X", name, cmd, buf[0], buf[1], buf[2]);
+    } else {
+      ESP_LOGI(TAG, "DCS %s (0x%02X): len=%d OK", name, cmd, (int)len);
+    }
+  } else {
+    ESP_LOGE(TAG, "DCS %s (0x%02X) read failed: %s", name, cmd, esp_err_to_name(r));
+  }
+}
+
 #define LCD_HOST    SPI2_HOST
 
 // AMOLED initialization sequence based on SH8601 reference
 static const co5300_lcd_init_cmd_t amoled_init_cmds[] = 
 {
-  {0x11, NULL, 0, 120},               // SLPOUT - Exit sleep mode, wait 120ms
-  {0x44, (uint8_t []){0x01, 0xD1}, 2, 0}, // Set tear scanline (for AMOLED)
-  {0x35, (uint8_t []){0x00}, 1, 0},   // TEON - Tearing effect line on
+  {0x11, NULL, 0, 500},               // SLPOUT - Exit sleep mode, wait 500ms
   {0x3A, (uint8_t []){0x55}, 1, 0},   // COLMOD - Set pixel format to 16-bit (RGB565)
-  {0x36, (uint8_t []){0x00}, 1, 0},   // MADCTL - Memory access control (normal)
-  {0x53, (uint8_t []){0x20}, 1, 10},  // WRCTRLD - Write CTRL Display (enable brightness control)
-  {0x51, (uint8_t []){0x00}, 1, 10},  // WRDISBV - Set brightness to 0 initially
-  {0x29, NULL, 0, 10},                // DISPON - Display on, wait 10ms
-  {0x51, (uint8_t []){0xFF}, 1, 0},   // WRDISBV - Set brightness to maximum after display on
+  {0x36, (uint8_t []){0x08}, 1, 0},   // MADCTL - BGR
+  {0x53, (uint8_t []){0x20}, 1, 10},  // WRCTRLD - enable brightness control
+  {0x51, (uint8_t []){0x80}, 1, 10},  // WRDISBV - medium brightness pre-DISPON
+  {0x29, NULL, 0, 50},                // DISPON - Display on, wait 50ms
+  {0x51, (uint8_t []){0xFF}, 1, 0},   // WRDISBV - Set brightness to maximum
 };
 
 esp_lcd_panel_handle_t panel_handle = NULL;
@@ -65,6 +82,10 @@ void test_display_basic()
   }
   ESP_LOGI(TAG, "Panel I/O created successfully");
 
+  // Probe DCS reads before panel creation
+  dcs_read_and_log(io_handle, 0x04, 3, "ID");
+  dcs_read_and_log(io_handle, 0x0A, 1, "STATUS");
+
   // Step 3: Create CO5300 panel
   ESP_LOGI(TAG, "3. Creating CO5300 panel...");
   co5300_vendor_config_t vendor_config = {
@@ -106,6 +127,11 @@ void test_display_basic()
   }
   ESP_LOGI(TAG, "Panel initialization completed");
 
+  // Probe DCS reads after init
+  dcs_read_and_log(io_handle, 0x0B, 1, "RDMADCTL");
+  dcs_read_and_log(io_handle, 0x0C, 1, "RDDCOLMOD");
+  dcs_read_and_log(io_handle, 0x0A, 1, "STATUS");
+
   // Step 6: Turn on display
   ESP_LOGI(TAG, "6. Turning on display...");
   ret = esp_lcd_panel_disp_off(panel_handle, false);
@@ -114,6 +140,27 @@ void test_display_basic()
     return;
   }
   ESP_LOGI(TAG, "Display enabled successfully");
+
+  // Probe DCS reads after DISPON
+  dcs_read_and_log(io_handle, 0x0A, 1, "STATUS");
+
+  // Quick small-area draw test (8x8 red) to rule out transfer issues
+  {
+    const int tile_w = 8;
+    const int tile_h = 8;
+    const int x0 = (EXAMPLE_LCD_H_RES - tile_w) / 2;
+    const int y0 = (EXAMPLE_LCD_V_RES - tile_h) / 2;
+    uint16_t* tile = (uint16_t*)malloc(tile_w * tile_h * sizeof(uint16_t));
+    if (tile) {
+      for (int i = 0; i < tile_w * tile_h; ++i) tile[i] = 0xF800; // red
+      esp_err_t r = esp_lcd_panel_draw_bitmap(panel_handle, x0, y0, x0 + tile_w, y0 + tile_h, tile);
+      ESP_LOGI(TAG, "Small tile draw ret=%s", esp_err_to_name(r));
+      free(tile);
+      delay(200);
+    } else {
+      ESP_LOGE(TAG, "Failed to allocate tile buffer");
+    }
+  }
 
   ESP_LOGI(TAG, "=== Basic Display Test Completed ===");
 }
@@ -197,8 +244,8 @@ void setup()
   test_display_basic();
   
   // Wait a moment, then test color patterns
-  delay(1000);
-  test_color_patterns();
+  //delay(1000);
+  //test_color_patterns();
   
   Serial.println("=== Setup Complete ===");
 }

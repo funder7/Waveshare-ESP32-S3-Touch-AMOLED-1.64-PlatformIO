@@ -9,6 +9,8 @@
 #include <stdint.h>
 
 #include "esp_lcd_panel_vendor.h"
+#include "esp_lcd_panel_interface.h"
+#include "esp_err.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -61,11 +63,11 @@ esp_err_t esp_lcd_new_panel_co5300(const esp_lcd_panel_io_handle_t io, const esp
  */
 #define CO5300_PANEL_BUS_SPI_CONFIG(sclk, mosi, max_trans_sz)   \
     {                                                           \
-        .sclk_io_num = sclk,                                    \
         .mosi_io_num = mosi,                                    \
         .miso_io_num = -1,                                      \
-        .quadhd_io_num = -1,                                    \
+        .sclk_io_num = sclk,                                    \
         .quadwp_io_num = -1,                                    \
+        .quadhd_io_num = -1,                                    \
         .max_transfer_sz = max_trans_sz,                        \
     }
 #define CO5300_PANEL_BUS_QSPI_CONFIG(sclk, d0, d1, d2, d3, max_trans_sz) \
@@ -98,17 +100,22 @@ esp_err_t esp_lcd_new_panel_co5300(const esp_lcd_panel_io_handle_t io, const esp
     {                                                           \
         .cs_gpio_num = cs,                                      \
         .dc_gpio_num = -1,                                      \
-        .spi_mode = 0,                                          \
-        .pclk_hz = 40 * 1000 * 1000,                            \
-        .trans_queue_depth = 10,                                \
+        .spi_mode = 3,                                          \
+        .pclk_hz = 10 * 1000 * 1000,                            \
+        .trans_queue_depth = 2,                                 \
         .on_color_trans_done = cb,                              \
         .user_ctx = cb_ctx,                                     \
         .lcd_cmd_bits = 32,                                     \
         .lcd_param_bits = 8,                                    \
         .flags = {                                              \
-            .octal_mode = true,                                 \
+            .octal_mode = false,                                \
         },                                                      \
     }
+
+/**
+ * @brief Dump CO5300 debug registers (ID, STATUS, MADCTL, COLMOD)
+ */
+esp_err_t esp_lcd_panel_co5300_debug_dump(esp_lcd_panel_handle_t panel);
 
 #ifdef __cplusplus
 }
