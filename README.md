@@ -21,3 +21,4 @@ Select the right PlatformIO env depending on what you need to do:
 4. The CO5300 driver for esp-idf [available on Github](https://github.com/espressif/esp-iot-solution/tree/master/components/display/lcd/esp_lcd_co5300) has been imported and [used in the project as-is](libraries\esp_lcd_co5300), replacing the SH8601+Custom init sequence.
 5. More tests have been added to setup the display alignment correctly: an offset gap has been configured in order to center the displayed image.
 6. Configure two PlatformIO environments to select which program to run: LVGL libraries will be compiled only when needed.
+7. Update Waveshare LVGL demo in order to set display offest correctly (already set in [display_bsp.c](libraries/display_bsp/display_bsp.c))

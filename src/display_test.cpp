@@ -1,11 +1,6 @@
 #include "Arduino.h"
-#include "esp_lcd_panel_interface.h"
-#include "esp_lcd_panel_io.h"
-#include "esp_lcd_panel_ops.h"
-#include "driver/spi_master.h"
 #include "esp_log.h"
-#include "esp_lcd_co5300.h"
-#include "lcd_config.h"
+#include "display_bsp.h"
 
 static const char* TAG = "display_test_co5300";
 
@@ -35,114 +30,24 @@ esp_lcd_panel_handle_t panel_handle = NULL;
 void test_display_basic()
 {
   ESP_LOGI(TAG, "=== Basic Display Test Started ===");
+  ESP_LOGI(TAG, "Display resolution: %dx%d", EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES);
+  ESP_LOGI(TAG, "Pin configuration - CLK:%d, D0:%d, D1:%d, D2:%d, D3:%d, CS:%d, RST:%d", 
+    EXAMPLE_PIN_NUM_LCD_PCLK, EXAMPLE_PIN_NUM_LCD_DATA0, EXAMPLE_PIN_NUM_LCD_DATA1,
+    EXAMPLE_PIN_NUM_LCD_DATA2, EXAMPLE_PIN_NUM_LCD_DATA3, EXAMPLE_PIN_NUM_LCD_CS, EXAMPLE_PIN_NUM_LCD_RST);
 
-  // Step 1: Initialize SPI bus
-  ESP_LOGI(TAG, "1. Initializing SPI bus...");
-  spi_bus_config_t buscfg = {};
-  buscfg.sclk_io_num = EXAMPLE_PIN_NUM_LCD_PCLK;
-  buscfg.data0_io_num = EXAMPLE_PIN_NUM_LCD_DATA0;
-  buscfg.data1_io_num = EXAMPLE_PIN_NUM_LCD_DATA1;
-  buscfg.data2_io_num = EXAMPLE_PIN_NUM_LCD_DATA2;
-  buscfg.data3_io_num = EXAMPLE_PIN_NUM_LCD_DATA3;
-  buscfg.max_transfer_sz = EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES * 2;  // 2 bytes per pixel for RGB565
-  
-  esp_err_t ret = spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO);
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(ret));
-    return;
-  }
-  ESP_LOGI(TAG, "SPI bus initialized successfully");
-
-  // Step 2: Create panel I/O
-  ESP_LOGI(TAG, "2. Creating panel I/O...");
+  // Initialize display using shared display_bsp library
+  ESP_LOGI(TAG, "Initializing display using display_bsp...");
   esp_lcd_panel_io_handle_t io_handle = NULL;
-  esp_lcd_panel_io_spi_config_t io_config = {};
-  io_config.cs_gpio_num = EXAMPLE_PIN_NUM_LCD_CS;
-  io_config.dc_gpio_num = -1;
-  io_config.spi_mode = 0;
-  io_config.pclk_hz = 40 * 1000 * 1000;
-  io_config.trans_queue_depth = 10;
-  io_config.on_color_trans_done = NULL;  // No callback for this test
-  io_config.user_ctx = NULL;
-  io_config.lcd_cmd_bits = 32;
-  io_config.lcd_param_bits = 8;
-
-  io_config.flags.quad_mode = true;
-  
-  ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io_handle);
+  esp_err_t ret = display_bsp_init(&panel_handle, &io_handle);
   if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Panel I/O creation failed: %s", esp_err_to_name(ret));
+    ESP_LOGE(TAG, "Display initialization failed: %s", esp_err_to_name(ret));
     return;
   }
-  ESP_LOGI(TAG, "Panel I/O created successfully");
-
-  // Skip DCS reads before init to avoid disturbing the panel state
-  vTaskDelay(pdMS_TO_TICKS(10));
-
-  // Step 3: Create CO5300 panel
-  ESP_LOGI(TAG, "3. Creating CO5300 panel...");
-  co5300_vendor_config_t vendor_config = {};
-  vendor_config.init_cmds = NULL;
-  vendor_config.init_cmds_size = 0;
-  vendor_config.flags.use_qspi_interface = 1;
-
-  esp_lcd_panel_dev_config_t panel_config = {};
-  panel_config.reset_gpio_num = EXAMPLE_PIN_NUM_LCD_RST;
-  panel_config.rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR;  // Changed to BGR for correct colors
-  panel_config.bits_per_pixel = 16;  // RGB565
-  panel_config.vendor_config = &vendor_config;
-
-  ret = esp_lcd_new_panel_co5300(io_handle, &panel_config, &panel_handle);
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "CO5300 panel creation failed: %s", esp_err_to_name(ret));
-    return;
-  }
-  ESP_LOGI(TAG, "CO5300 panel created successfully");
-
-  // Step 4: Reset panel
-  ESP_LOGI(TAG, "4. Resetting panel...");
-  vTaskDelay(pdMS_TO_TICKS(300)); // extra power-settle delay at boot
-  ret = esp_lcd_panel_reset(panel_handle);
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Panel reset failed: %s", esp_err_to_name(ret));
-    return;
-  }
-  ESP_LOGI(TAG, "Panel reset completed");
-
-  // Step 5: Initialize panel
-  ESP_LOGI(TAG, "5. Initializing panel...");
-  ret = esp_lcd_panel_init(panel_handle);
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Panel initialization failed: %s", esp_err_to_name(ret));
-    return;
-  }
-  ESP_LOGI(TAG, "Panel initialization completed");
-  vTaskDelay(pdMS_TO_TICKS(50)); // allow panel to settle after init
-
-  // Set display offset to compensate for CO5300 memory alignment
-  ESP_LOGI(TAG, "Setting display gap offset...");
-  ret = esp_lcd_panel_set_gap(panel_handle, LCD_OFFSET_GAP_X, LCD_OFFSET_GAP_Y); // Try x_gap=6, y_gap=0 first
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Set gap failed: %s", esp_err_to_name(ret));
-  } else {
-    ESP_LOGI(TAG, "Display gap set to x_gap=%d, y_gap=%d", LCD_OFFSET_GAP_X, LCD_OFFSET_GAP_Y);
-  }
+  ESP_LOGI(TAG, "Display initialized successfully");
 
   // Probe DCS reads after init
   dcs_read_and_log(io_handle, 0x0B, 1, "RDMADCTL");
   dcs_read_and_log(io_handle, 0x0C, 1, "RDDCOLMOD");
-  dcs_read_and_log(io_handle, 0x0A, 1, "STATUS");
-
-  // Step 6: Turn on display
-  ESP_LOGI(TAG, "6. Turning on display...");
-  ret = esp_lcd_panel_disp_on_off(panel_handle, true);
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Display enable failed: %s", esp_err_to_name(ret));
-    return;
-  }
-  ESP_LOGI(TAG, "Display enabled successfully");
-
-  // Probe DCS reads after DISPON
   dcs_read_and_log(io_handle, 0x0A, 1, "STATUS");
 
   // Quick small-area draw test (8x8 red) to rule out transfer issues
@@ -154,7 +59,7 @@ void test_display_basic()
     uint16_t* tile = (uint16_t*)malloc(tile_w * tile_h * sizeof(uint16_t));
     if (tile) {
       for (int i = 0; i < tile_w * tile_h; ++i) tile[i] = 0xF800; // red
-      esp_err_t r = esp_lcd_panel_draw_bitmap(panel_handle, x0, y0, x0 + tile_w, y0 + tile_h, tile);
+      esp_err_t r = display_bsp_draw_bitmap(panel_handle, x0, y0, x0 + tile_w, y0 + tile_h, tile);
       ESP_LOGI(TAG, "Small tile draw at (%d,%d) ret=%s", x0, y0, esp_err_to_name(r));
       free(tile);
       delay(1000);
@@ -174,22 +79,22 @@ void test_display_basic()
       for (int i = 0; i < tile_w * tile_h; ++i) tile[i] = 0xFFFF;
       
       // Top-left corner
-      esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, tile_w, tile_h, tile);
+      display_bsp_draw_bitmap(panel_handle, 0, 0, tile_w, tile_h, tile);
       ESP_LOGI(TAG, "Top-left corner (0,0) drawn");
       delay(500);
       
       // Top-right corner  
-      esp_lcd_panel_draw_bitmap(panel_handle, EXAMPLE_LCD_H_RES-tile_w, 0, EXAMPLE_LCD_H_RES, tile_h, tile);
+      display_bsp_draw_bitmap(panel_handle, EXAMPLE_LCD_H_RES-tile_w, 0, EXAMPLE_LCD_H_RES, tile_h, tile);
       ESP_LOGI(TAG, "Top-right corner (%d,0) drawn", EXAMPLE_LCD_H_RES-tile_w);
       delay(500);
       
       // Bottom-left corner
-      esp_lcd_panel_draw_bitmap(panel_handle, 0, EXAMPLE_LCD_V_RES-tile_h, tile_w, EXAMPLE_LCD_V_RES, tile);
+      display_bsp_draw_bitmap(panel_handle, 0, EXAMPLE_LCD_V_RES-tile_h, tile_w, EXAMPLE_LCD_V_RES, tile);
       ESP_LOGI(TAG, "Bottom-left corner (0,%d) drawn", EXAMPLE_LCD_V_RES-tile_h);
       delay(500);
       
       // Bottom-right corner
-      esp_lcd_panel_draw_bitmap(panel_handle, EXAMPLE_LCD_H_RES-tile_w, EXAMPLE_LCD_V_RES-tile_h, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES, tile);
+      display_bsp_draw_bitmap(panel_handle, EXAMPLE_LCD_H_RES-tile_w, EXAMPLE_LCD_V_RES-tile_h, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES, tile);
       ESP_LOGI(TAG, "Bottom-right corner (%d,%d) drawn", EXAMPLE_LCD_H_RES-tile_w, EXAMPLE_LCD_V_RES-tile_h);
       
       free(tile);
@@ -242,7 +147,7 @@ void test_display_alignment()
   }
 
   ESP_LOGI(TAG, "Drawing border test pattern...");
-  esp_err_t ret = esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES, test_buffer);
+  esp_err_t ret = display_bsp_draw_bitmap(panel_handle, 0, 0, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES, test_buffer);
   ESP_LOGI(TAG, "Border test ret=%s", esp_err_to_name(ret));
   
   free(test_buffer);
@@ -292,7 +197,7 @@ void test_color_patterns()
     }
     
     // Send to display - ensure we cover the entire screen
-    esp_err_t ret = esp_lcd_panel_draw_bitmap(
+    esp_err_t ret = display_bsp_draw_bitmap(
       panel_handle, 
       0, 0, 
       EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES, 
@@ -312,35 +217,3 @@ void test_color_patterns()
   free(color_buffer);
   ESP_LOGI(TAG, "=== Color Pattern Test Completed ===");
 }
-
-// These functions are now called from main.cpp when USE_DISPLAY_TEST is defined
-#ifndef USE_DISPLAY_TEST
-void setup()
-{
-  Serial.begin(115200);
-  delay(2000);
-  
-  Serial.println("=== AMOLED Display Direct Test ===");
-  ESP_LOGI(TAG, "Starting AMOLED display direct test");
-  ESP_LOGI(TAG, "Display resolution: %dx%d", EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES);
-  ESP_LOGI(TAG, "Pin configuration - CLK:%d, D0:%d, D1:%d, D2:%d, D3:%d, CS:%d, RST:%d", 
-    EXAMPLE_PIN_NUM_LCD_PCLK, EXAMPLE_PIN_NUM_LCD_DATA0, EXAMPLE_PIN_NUM_LCD_DATA1,
-    EXAMPLE_PIN_NUM_LCD_DATA2, EXAMPLE_PIN_NUM_LCD_DATA3, EXAMPLE_PIN_NUM_LCD_CS, EXAMPLE_PIN_NUM_LCD_RST);
-
-  // Test basic display functionality
-  test_display_basic();
-  
-  // Test display alignment
-  delay(2000);
-  test_display_alignment();
-  
-  // Wait a moment, then test color patterns
-  delay(2000);
-  test_color_patterns();
-  
-  Serial.println("=== Display Test Complete ===");
-}
-
-void loop()
-{}
-#endif

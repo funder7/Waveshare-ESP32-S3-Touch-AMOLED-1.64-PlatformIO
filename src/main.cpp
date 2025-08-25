@@ -17,10 +17,10 @@ extern void test_color_patterns();
 
 // Include headers for LVGL demo
 #ifdef USE_LVGL_DEMO
-#include "lcd_bsp.h"
 #include "FT3168.h"
 
-extern void lcd_lvgl_Init();
+extern void lvgl_demo_setup();
+extern void lvgl_demo_loop();
 extern void set_amoled_backlight(uint8_t brightness);
 #endif
 
@@ -54,11 +54,10 @@ void setup() {
     
 #elif defined(USE_LVGL_DEMO)
     Serial.println("=== Starting LVGL Demo Mode ===");
-    Serial.println("Starting LCD initialization...");
     
-    lcd_lvgl_Init();
+    lvgl_demo_setup();
     delay(2000);
-    Serial.println("Setup done - LCD should be initialized");
+    Serial.println("Setup done - LVGL demo initialized");
     
 #else
     Serial.println("=== No Mode Selected ===");
@@ -74,20 +73,7 @@ void loop() {
     Serial.println("Display test completed. Looping...");
     
 #elif defined(USE_LVGL_DEMO)
-    Serial.println("Looping");
-    delay(2000);
-    // Uncomment these lines to test backlight control:
-    // set_amoled_backlight(0xff);
-    // delay(1000);
-    // set_amoled_backlight(200);
-    // delay(1000);
-    // set_amoled_backlight(150);
-    // delay(1000);
-    // set_amoled_backlight(100);
-    // delay(1000);
-    // set_amoled_backlight(50);
-    // delay(1000);
-    // set_amoled_backlight(0);
+    lvgl_demo_loop();
     
 #else
     delay(5000);
