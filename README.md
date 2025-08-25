@@ -5,6 +5,16 @@ This is a demo project built from the original Demo provided by Waveshare for Ar
 The Demo project was using a SH8601 display driver library with a custom initialization sequence, specific for the CO5300 driver.
 It contains the board configuration and the minimum setup to run a LVGL demo.
 
+***NOTE:*** C/C++ is not my daily bread, I used AI a lot in this project. Any kind of help/suggestion on how to improve this code is welcome.
+
+## Requirements
+
+This project CAN'T run on PLatformIO: you need to switch to [pioarduino](https://github.com/pioarduino), which allows you to use
+the same toolchain (and core libraries) as the Arduino IDE. 
+
+In case of problems when switching from PlatformIO to pioarduino, ensure to delete the .platformio in your home folder completely,
+then restart your IDE/editor.  
+
 ## Env description
 
 Select the right PlatformIO env depending on what you need to do:
@@ -22,3 +32,9 @@ Select the right PlatformIO env depending on what you need to do:
 5. More tests have been added to setup the display alignment correctly: an offset gap has been configured in order to center the displayed image.
 6. Configure two PlatformIO environments to select which program to run: LVGL libraries will be compiled only when needed.
 7. Update Waveshare LVGL demo in order to set display offest correctly (already set in [display_bsp.c](libraries/display_bsp/display_bsp.c))
+
+
+### What must be done
+
+- [ ] Fix RGB -> BGR in LVGL
+- [ ] General check-up
