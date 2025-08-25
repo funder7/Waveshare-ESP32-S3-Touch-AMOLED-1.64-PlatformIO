@@ -19,6 +19,10 @@
 extern "C" {
 #endif
 
+#define ESP_LCD_CO5300_VER_MAJOR 1
+#define ESP_LCD_CO5300_VER_MINOR 0
+#define ESP_LCD_CO5300_VER_PATCH 0
+
 /**
  * @brief LCD panel initialization commands.
  *
