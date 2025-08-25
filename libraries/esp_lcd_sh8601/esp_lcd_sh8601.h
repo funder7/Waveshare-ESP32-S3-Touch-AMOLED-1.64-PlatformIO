@@ -106,7 +106,7 @@ esp_err_t esp_lcd_new_panel_sh8601(const esp_lcd_panel_io_handle_t io, const esp
         .lcd_cmd_bits = 32,                                     \
         .lcd_param_bits = 8,                                    \
         .flags = {                                              \
-            .octal_mode = true,                                 \
+            .quad_mode = true,                                  \
         },                                                      \
     }
 

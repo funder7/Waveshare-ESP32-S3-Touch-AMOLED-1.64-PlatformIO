@@ -2,44 +2,57 @@
 #include "esp_lcd_panel_interface.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
+#include "esp_lcd_panel_vendor.h"
 #include "driver/spi_master.h"
 #include "esp_log.h"
-#include "esp_lcd_co5300_my.h"
+#include "esp_lcd_sh8601.h"
 #include "lcd_config.h"
 
-static const char* TAG = "display_test";
+static const char* TAG = "display_test_sh8601";
 
 static void dcs_read_and_log(esp_lcd_panel_io_handle_t io, uint8_t cmd, size_t len, const char* name)
 {
   uint8_t buf[8] = {0};
   if (len > sizeof(buf)) len = sizeof(buf);
-  uint32_t field = (0x0B << 24) | cmd; // CO5300 Fast Read opcode + cmd
-  esp_err_t r = esp_lcd_panel_io_rx_param(io, field, buf, len);
-  if (r == ESP_OK) {
-    if (len == 1) {
-      ESP_LOGI(TAG, "DCS %s (0x%02X): %02X", name, cmd, buf[0]);
-    } else if (len == 3) {
-      ESP_LOGI(TAG, "DCS %s (0x%02X): %02X %02X %02X", name, cmd, buf[0], buf[1], buf[2]);
-    } else {
-      ESP_LOGI(TAG, "DCS %s (0x%02X): len=%d OK", name, cmd, (int)len);
-    }
+  
+  // Try different read methods for CO5300
+  ESP_LOGI(TAG, "Attempting to read %s (0x%02X)...", name, cmd);
+  
+  // Method 1: Standard QSPI read with Fast Read command
+  uint32_t field1 = (0x0B << 24) | (cmd << 16); // Fast Read + cmd as address
+  esp_err_t r1 = esp_lcd_panel_io_rx_param(io, field1, buf, len);
+  
+  // Method 2: Simple command read
+  uint32_t field2 = (0x03 << 24) | cmd; 
+  esp_err_t r2 = esp_lcd_panel_io_rx_param(io, field2, buf, len);
+  
+  // Method 3: Direct command without QSPI encoding
+  esp_err_t r3 = esp_lcd_panel_io_rx_param(io, cmd, buf, len);
+  
+  if (r1 == ESP_OK && buf[0] != 0xFF) {
+    ESP_LOGI(TAG, "DCS %s (0x%02X) [Fast Read]: %02X", name, cmd, buf[0]);
+  } else if (r2 == ESP_OK && buf[0] != 0xFF) {
+    ESP_LOGI(TAG, "DCS %s (0x%02X) [Standard]: %02X", name, cmd, buf[0]);
+  } else if (r3 == ESP_OK && buf[0] != 0xFF) {
+    ESP_LOGI(TAG, "DCS %s (0x%02X) [Direct]: %02X", name, cmd, buf[0]);
   } else {
-    ESP_LOGE(TAG, "DCS %s (0x%02X) read failed: %s", name, cmd, esp_err_to_name(r));
+    ESP_LOGW(TAG, "DCS %s (0x%02X) read failed or returned 0xFF", name, cmd);
   }
 }
 
 #define LCD_HOST    SPI2_HOST
 
-// CO5300 AMOLED initialization sequence - corrected per datasheet
-static const co5300_lcd_init_cmd_t amoled_init_cmds[] = 
+// CO5300 AMOLED initialization sequence - copied from working Arduino demo
+static const sh8601_lcd_init_cmd_t amoled_init_cmds[] = 
 {
-  {0x11, NULL, 0, 120},               // SLPOUT - Exit sleep mode, wait 120ms (per datasheet)
-  {0x3A, (uint8_t []){0x55}, 1, 0},   // COLMOD - Set pixel format to 16-bit (RGB565)
-  {0x36, (uint8_t []){0x00}, 1, 0},   // MADCTL - Normal RGB order (not BGR)
-  {0x53, (uint8_t []){0x20}, 1, 10},  // WRCTRLD - enable brightness control
-  {0x51, (uint8_t []){0x80}, 1, 10},  // WRDISBV - medium brightness pre-DISPON
-  {0x29, NULL, 0, 50},                // DISPON - Display on, wait 50ms
-  {0x51, (uint8_t []){0xFF}, 1, 0},   // WRDISBV - Set brightness to maximum
+  {0x11, (uint8_t []){0x00}, 0, 80},  // SLPOUT - Exit sleep mode, wait 80ms
+  {0xC4, (uint8_t []){0x80}, 1, 0},   // CO5300 specific command
+  {0x35, (uint8_t []){0x00}, 1, 0},   // Tearing Effect Line ON
+  {0x53, (uint8_t []){0x20}, 1, 1},   // Write Control Display
+  {0x63, (uint8_t []){0xFF}, 1, 1},   // CO5300 specific command
+  {0x51, (uint8_t []){0x00}, 1, 1},   // Set brightness to 0 initially
+  {0x29, (uint8_t []){0x00}, 0, 10},  // DISPON - Display on, wait 10ms
+  {0x51, (uint8_t []){0xFF}, 1, 0},   // Set brightness to maximum
 };
 
 esp_lcd_panel_handle_t panel_handle = NULL;
@@ -50,13 +63,13 @@ void test_display_basic()
 
   // Step 1: Initialize SPI bus
   ESP_LOGI(TAG, "1. Initializing SPI bus...");
-  const spi_bus_config_t buscfg = CO5300_PANEL_BUS_QSPI_CONFIG(
+  const spi_bus_config_t buscfg = SH8601_PANEL_BUS_QSPI_CONFIG(
     EXAMPLE_PIN_NUM_LCD_PCLK,
     EXAMPLE_PIN_NUM_LCD_DATA0,
     EXAMPLE_PIN_NUM_LCD_DATA1,
     EXAMPLE_PIN_NUM_LCD_DATA2,
     EXAMPLE_PIN_NUM_LCD_DATA3,
-    EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES * 2  // 2 bytes per pixel for RGB565
+    EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES * LCD_BIT_PER_PIXEL / 8  // Match Arduino exactly
   );
   
   esp_err_t ret = spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO);
@@ -69,7 +82,8 @@ void test_display_basic()
   // Step 2: Create panel I/O
   ESP_LOGI(TAG, "2. Creating panel I/O...");
   esp_lcd_panel_io_handle_t io_handle = NULL;
-  const esp_lcd_panel_io_spi_config_t io_config = CO5300_PANEL_IO_QSPI_CONFIG(
+  // Use exact Arduino configuration
+  const esp_lcd_panel_io_spi_config_t io_config = SH8601_PANEL_IO_QSPI_CONFIG(
     EXAMPLE_PIN_NUM_LCD_CS,
     NULL,  // No callback for this test
     NULL
@@ -82,13 +96,18 @@ void test_display_basic()
   }
   ESP_LOGI(TAG, "Panel I/O created successfully");
 
-  // Probe DCS reads before panel creation
-  dcs_read_and_log(io_handle, 0x04, 3, "ID");
+  // Test basic communication first
+  ESP_LOGI(TAG, "Testing basic QSPI communication...");
+  
+  // Try reading some basic registers
+  dcs_read_and_log(io_handle, 0x04, 1, "ID");
+  vTaskDelay(pdMS_TO_TICKS(10));
   dcs_read_and_log(io_handle, 0x0A, 1, "STATUS");
+  vTaskDelay(pdMS_TO_TICKS(10));
 
-  // Step 3: Create CO5300 panel
-  ESP_LOGI(TAG, "3. Creating CO5300 panel...");
-  co5300_vendor_config_t vendor_config = {
+  // Step 3: Create SH8601 panel
+  ESP_LOGI(TAG, "3. Creating SH8601 panel...");
+  sh8601_vendor_config_t vendor_config = {
     .init_cmds = amoled_init_cmds,
     .init_cmds_size = sizeof(amoled_init_cmds) / sizeof(amoled_init_cmds[0]),
     .flags = {
@@ -98,16 +117,17 @@ void test_display_basic()
 
   const esp_lcd_panel_dev_config_t panel_config = {
     .reset_gpio_num = EXAMPLE_PIN_NUM_LCD_RST,
-    .bits_per_pixel = 16,  // RGB565
+    .color_space = ESP_LCD_COLOR_SPACE_RGB,
+    .bits_per_pixel = 16,  // RGB565  
     .vendor_config = &vendor_config,
   };
 
-  ret = esp_lcd_new_panel_co5300(io_handle, &panel_config, &panel_handle);
+  ret = esp_lcd_new_panel_sh8601(io_handle, &panel_config, &panel_handle);
   if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "CO5300 panel creation failed: %s", esp_err_to_name(ret));
+    ESP_LOGE(TAG, "SH8601 panel creation failed: %s", esp_err_to_name(ret));
     return;
   }
-  ESP_LOGI(TAG, "CO5300 panel created successfully");
+  ESP_LOGI(TAG, "SH8601 panel created successfully");
 
   // Step 4: Reset panel
   ESP_LOGI(TAG, "4. Resetting panel...");
@@ -144,10 +164,10 @@ void test_display_basic()
   // Probe DCS reads after DISPON
   dcs_read_and_log(io_handle, 0x0A, 1, "STATUS");
 
-  // Quick small-area draw test (8x8 red) to rule out transfer issues
+  // Quick small-area draw test (40x40 red) to rule out transfer issues
   {
-    const int tile_w = 8;
-    const int tile_h = 8;
+    const int tile_w = 40;
+    const int tile_h = 40;
     const int x0 = (EXAMPLE_LCD_H_RES - tile_w) / 2;
     const int y0 = (EXAMPLE_LCD_V_RES - tile_h) / 2;
     uint16_t* tile = (uint16_t*)malloc(tile_w * tile_h * sizeof(uint16_t));
@@ -244,8 +264,8 @@ void setup()
   test_display_basic();
   
   // Wait a moment, then test color patterns
-  delay(1000);
-  test_color_patterns();
+  // delay(1000);
+  // test_color_patterns();
   
   Serial.println("=== Setup Complete ===");
 }
